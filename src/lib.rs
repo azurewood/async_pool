@@ -119,6 +119,30 @@ mod async_impl {
             let job = Box::pin(future);
             let _ = self.sender.unbounded_send(job);
         }
+
+        pub fn execute_with_retry<F, Fut>(&self, f: F, max_retries: usize)
+        where
+            F: Fn() -> Fut + Send + 'static,
+            Fut: Future<Output = Result<(), Box<dyn std::error::Error>>> + Send + 'static,
+        {
+            let sender = self.sender.clone();
+            let future = async move {
+                for attempt in 0..=max_retries {
+                    match f().await {
+                        Ok(_) => return,
+                        Err(e) if attempt < max_retries => {
+                            eprintln!("Attempt {} failed: {}. Retrying...", attempt + 1, e);
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!("All {} attempts failed. Last error: {}", max_retries + 1, e);
+                            return;
+                        }
+                    }
+                }
+            };
+            let _ = sender.unbounded_send(Box::pin(future));
+        }
     }
 
     impl Drop for AsyncPool {
